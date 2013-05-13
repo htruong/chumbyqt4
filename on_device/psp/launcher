@@ -1,0 +1,6 @@
+#!/bin/bash
+
+cd /psp
+source /psp/chumby.env
+./Trebuchet2 -qws
+

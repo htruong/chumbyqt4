@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html>
+<head>
+   <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+   <meta name="viewport" content="initial-scale=1.0; maximum-scale=1.0; user-scalable=0;"/>
+   <link rel="stylesheet" href="../../assets/iui/iui.css" type="text/css" />
+   <link rel="stylesheet" href="../../assets/iui/t/default/default-theme.css" type="text/css"/>
+   <!--<link rel="stylesheet" href="../../assets/iui/ext-sandbox/t/webos/webos-theme.css" type="text/css" />-->
+   <script src="../../assets/js/jquery-1.7.1.min.js"></script>
+   <script type="application/x-javascript" src="../../assets/iui/iui.js"></script>
+   <style>
+   body.landscape > :not(.toolbar) {
+    min-height: 240px;
+   }
+   #projectorcontrol, .panel fieldset {
+    margin-bottom: 5px;
+   }
+   .panel {
+    padding: 3px;
+   }
+
+   body {
+    overflow: hidden;
+   }
+
+    div.spinner {
+	display:block;
+	display:none;
+	background: black url(../../assets/iui/t/default/loading.png) no-repeat center center;
+	position: absolute;
+	top: 0px;
+	left: 0px;
+	height: 100% !important;
+	width: 100%;
+	opacity: 0.9;
+	z-index:999;
+    }
+
+    #dim_overlay {
+	display:block;
+	display:none;
+	position: absolute;
+	background: black url(../../assets/img/standby.png) no-repeat center center;
+	top: 0px;
+	left: 0px;
+	height: 100% !important;
+	width: 100%;
+	z-index:999;
+    }
+
+   img {
+	max-width: 100%;
+   }
+
+   .lessthan5mins {
+	color: orange;
+   }
+
+   .lessthan1min {
+	color: red;
+   }
+
+   img {
+	vertical-align: middle;
+   }
+   </style>
+</head>
+<body>
+   <div class="toolbar">
+      <h1 id="pageTitle"></h1>
+      <a id="homeButton" style="display: none;" onclick="return go_home()" class="button leftButton">Home</a>
+      <a class="button blueButton" onclick="return show_home_button()" id="toolsbutton" href="#tools">Tools</a>
+   </div>
+   
+   <div id="welcomepage" title="Temp monitor" class="panel" selected="true">
+    <!--<div style="margin-bottom:10px;"><a class="whiteButton" href="#onpage" onclick="request_backend_by_tag('power_on_action'); show_spinner(30000); projector_on = 1;"><img src="../../assets/img/system-shutdown-restart-panel.png"> Turn on Projector</a></div>-->
+    <fieldset>
+      <div class="row" style="text-align:center;">
+        <h1>Temp: <span id="current_temp">???</span>C</h1>
+      </div>
+   </fieldset>
+   </div>
+
+   <ul id="tools" title="Tools">
+	<li class="group">In Class</li>
+	<li><a href="#timer"><img src="../../assets/img/view-history.png">Timer</a></li>
+	<li><a onclick="return dim_screen()"><img src="../../assets/img/pda.png"> Dim screen</a></li>
+	<li class="group">Administrative Tools</li>
+	<li><a href="#admintools"><img src="../../assets/img/system-run.png"> Configuration &amp; Settings</a></li>
+   </ul>
+
+   <ul id="admintools" title="Admin Tools">
+	<li><a href="#onpage" onclick="return location.reload(true)" >Reload Configuration</a></li>
+	<li><a href="#diaglist" onclick="return diag()" >Diagnostic Information</a></li>
+   </ul>
+   
+   <div id="timer" title="Timer" class="panel">
+	<fieldset>
+            <div class="row" style="text-align: center;">
+		<h1 id="timer_counter"><span id="minscount">00</span><span id="separator">:</span><span id="secscount">00</span></h1>
+            </div>
+	</fieldset>
+	<a class="redButton" id="timerstartstop" onclick="return start_timer();">Start timer</a>
+	<a class="whiteButton" onclick="return add_x_secs_timer(300);">Add 5 minutes</a>
+	<!--
+	<fieldset>
+            <div class="row">
+                <label>Beep on Time up</label>
+                <div class="toggle" onclick="" toggled="false"><span class="thumb"></span><span class="toggleOn">ON</span><span class="toggleOff">OFF</span></div>
+            </div>
+            <div class="row">
+                <label>Beep on 5/3/1 marks</label>
+                <div class="toggle" onclick="" toggled="true"><span class="thumb"></span><span class="toggleOn">ON</span><span class="toggleOff">OFF</span></div>
+            </div>
+        </fieldset>
+	-->
+   </div>
+   
+   <ul id="diaglist" title="Diagnostic">
+	<li><a>Chumby's IP <span id="selfip">...</span></a></li>
+   </ul>
+   
+   <div id="loadingscreen" class="spinner">
+   </div>
+   
+   <div id="dim_overlay" onclick="return undim_screen()">
+   </div>
+
+   
+    <script>
+	dimTimer = setTimeout("dim_screen();", 1800000);
+	
+	function dim_screen() {
+	    request_backend("screen dim");
+	    $('#dim_overlay').show();
+	    return false;
+	}
+	
+	function request_backend(command) {
+	    $.ajax({
+		url: "index.cgi",
+		data: { act: command }
+		}).done(function( msg ) {
+		    if (console && console.log) {
+			console.log( "Backend returned: " + msg );
+		    }
+		    if (msg.indexOf("OK") != -1) {
+			request_sound("beep 1");
+		    }
+	    });
+	    return false;
+	    clearTimeout(dimTimer);
+	    dimTimer = setTimeout("dim_screen();", 1800000);
+	}
+
+	function update_temp() {
+	    $.getJSON("index.cgi?jsoncallback=?",
+		{
+		    act: "temp"
+		},
+	    function(data) {
+		if (console && console.log) {
+		    console.log(data);
+		}
+		$('#current_temp').text(data);
+	    });
+	}
+	
+	function undim_screen() {
+	    request_backend("screen undim");
+	    $('#dim_overlay').hide();
+	    clearTimeout(dimTimer);
+	    dimTimer = setTimeout("dim_screen();", 1800000);
+	    return false;
+	}
+
+	function show_home_button() {
+	    $('#homeButton').show();
+	}
+
+	function hide_home_button() {
+	    $('#homeButton').hide();
+	}
+
+	function go_home() {
+		iui.showPageById('welcomepage');
+	}
+
+	function request_sound(command) {
+	    $.ajax({
+		url: "index.cgi",
+		data: { act: command }
+	    });
+	}
+	
+	function diag() {
+	$.getJSON("index.cgi?jsoncallback=?",
+	    {
+		act: "diag ip"
+	    },
+	function(data) {
+	    if (console && console.log) {
+		console.log(data.result);
+	    }
+	    if (data.result)
+		$('#selfip').text(data.result);
+		//$('#' + data.field).val(data.value);
+	});
+
+	return false;
+	}
+
+	function show_spinner(duration) {
+	    $('#loadingscreen').show();
+	    if (duration)
+		setTimeout("hide_spinner()",duration);
+	    return false;
+	}
+
+	function hide_spinner() {
+	    $('#loadingscreen').hide();
+	}
+
+	var timer_ctr = 0;
+	var watchTimerActive = 0;
+	var watchTimerTimer = 0;
+	
+	function pretty_format_secs(x, mindiv, secdiv) {
+	    var minutes = Math.floor(x / 60);
+	    var seconds = x % 60;
+	    if (seconds < 10) {seconds = "0"+seconds;}
+	    
+	    var time    = ''+minutes+':'+seconds;
+	    if (mindiv)
+		$(mindiv).text(minutes);
+	    if (secdiv)
+		$(secdiv).text(seconds);
+		
+	    return time;
+	}
+
+	function add_x_secs_timer(x) {
+	    timer_ctr += x;
+	    pretty_format_secs(timer_ctr, '#minscount', '#secscount');
+	    return false;
+	}
+
+	function start_timer() {
+	    if (timer_ctr <= 0) {
+		//$('#timer_counter').text("Set time first!");
+		alert("Please set the time first!");
+		return false;
+	    }
+
+	    if (!watchTimerActive) {
+	    
+		$('#timer_counter').removeClass('lessthan5mins');
+		$('#timer_counter').removeClass('lessthan1min');
+	    
+		watchTimerTimer = setInterval("update_timer()",1000);
+		watchTimerActive = 1;
+		$('#timerstartstop').text("Stop & Reset timer");
+	    } else {
+		$('#timerstartstop').text("Start timer");
+		timer_ctr = 0;
+		pretty_format_secs(0, '#minscount', '#secscount');
+		clearInterval(watchTimerTimer);
+		watchTimerActive = 0;
+	    }
+	}
+
+	function update_timer() {
+	    timer_ctr-= 1;
+	    if(timer_ctr <= 0) {
+		request_sound('beep 3');
+		pretty_format_secs(0, '#minscount', '#secscount');
+		$('#timerstartstop').text("Start timer");
+		
+		$('#timer_counter').removeClass('lessthan5mins');
+		$('#timer_counter').removeClass('lessthan1mins');
+		
+		clearInterval(watchTimerTimer);
+		watchTimerActive = 0;
+		return false;
+	    }
+	    
+	    pretty_format_secs(timer_ctr, '#minscount', '#secscount');
+	    
+	    if((timer_ctr < 300) && !($('#timer_counter').hasClass('lessthan5mins'))) {
+		request_sound('beep 1');
+		$('#timer_counter').addClass('lessthan5mins');
+	    }
+	    
+	    if((timer_ctr < 60) && !($('#timer_counter').hasClass('lessthan1min'))) {
+		request_sound('beep 1');
+		$('#timer_counter').removeClass('lessthan5mins');
+		$('#timer_counter').addClass('lessthan1min');
+	    }
+
+	    blink('#separator');
+	}
+
+	function blink(x) {
+                if ($(x).css('visibility')=='hidden'){
+                    $(x).css('visibility', 'visible');
+                } else {
+                    $(x).css('visibility', 'hidden');
+                }
+	}
+
+	tempTimer = setInterval("update_temp()",10000);
+    </script>
+    
+</body>
+</html>

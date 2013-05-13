@@ -1,0 +1,195 @@
+#!/bin/sh
+# Original script by scross@chumby.com
+# Edited and modified heavily by juhapekka.piiroinen@gmail.com
+OKPOS=45
+
+# Turn on the backlight
+echo "100" > /sys/devices/platform/stmp3xxx-bl/backlight/stmp3xxx-bl/brightness
+
+####################
+dd if=/dev/zero of=/dev/fb0 bs=640 count=240
+/usr/bin/imgtool --mode=draw /psp/splash.png
+echo -n "Entering Console mode" | fbwrite --color=255,255,255 --pos=1,1 -
+
+# Run ntpd to keep time in sync even without the network (using the driftfile)
+if [ ! -e /psp/ntp.drift ]
+then
+    echo -140.000 > /psp/ntp.drift
+fi
+ntpd -g -x -f /psp/ntp.drift
+
+
+###################
+echo -n "Bring up udev.." | fbwrite --color=255,255,255 --pos=1,2 -
+mount /dev
+mknod /dev/null c 1 3
+mknod /dev/tty0 c 4 0
+mknod /dev/mem c 1 1
+mknod /dev/kmem c 1 2
+mkdir /dev/oprofile
+mkdir /dev/pts
+mount /dev/pts
+udevd --daemon
+# trigger udev
+udevadm trigger
+# Wait for all that noise to die down.
+udevadm settle
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,2 -
+
+
+###################
+# Check if we need to disable this... :-)
+#IS_RECOVERY=$(grep partition=recovery /proc/cmdline | wc -l)
+#if [ "x${IS_RECOVERY}" == "x1" ]
+#then
+#	mv /psp/rcS /psp/rcS.disabled
+#	reboot
+#fi
+
+####################
+echo -n "Initializing USB subsystem.." | fbwrite --color=255,255,255 --pos=1,3 -
+reset_usb.sh
+modprobe ehci_hcd
+udevadm trigger
+# Wait for things to quiet down after the USB reset
+udevadm settle
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,3 -
+
+####################
+# Fire off syslog.  This quiets down the boot screen a little.
+echo -n "Starting syslogd.." | fbwrite --color=255,255,255 --pos=1,4 -
+/sbin/syslogd -C200
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,4 -
+
+####################
+# Mount the USB partition, which should be available now that USB is loaded.
+# Sleep seven seconds to wait for device to settle, to allow any mass
+# storage devices to come ready.  We have delay_use set to five seconds in
+# usbstorage.ko, so it shouldn't take much longer than this to settle.  We
+# need to do this so that we can run hooks off of the external devices.
+if [ -e /sys/devices/platform/stmp3xxx-usb/fsl-ehci/usb1/1-1/1-1.1 ]
+then
+    echo -n "Mounting usb.." | fbwrite --color=255,255,255 --pos=1,5 -
+    WAIT_TIME=0
+        while [ ${WAIT_TIME} -lt 7 -a $(mount | grep /mnt/usb | wc -l) -lt 1 ]
+        do
+                sleep 1
+                WAIT_TIME=$((${WAIT_TIME} + 1))
+        done
+        echo "Waited ${WAIT_TIME} seconds for USB device to mount."
+        echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,5 -
+
+        ####################
+        # Check if we need to update our chumby
+        UPDATEPACKAGE=/mnt/usb/update.tgz
+        if [ -e ${UPDATEPACKAGE} ]
+        then
+            echo -n "Found update: You have 10 secs to abort..." | fbwrite --color=255,255,255 --pos=1,6 -
+            sleep 10
+            if [ -e ${UPDATEPACKAGE} ]
+            then
+		exec /usr/chumby/scripts/update_usb.sh
+            fi
+        fi
+fi
+
+#####################
+# Load the i2c interface.  This will enable the dcid query program to talk to
+# the dcid eeprom.
+echo -n "Loading the i2c interface" | fbwrite --color=255,255,255 --pos=1,7 -
+modprobe i2c-dev
+modprobe i2c-stmp378x
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,7 -
+
+####################
+# Bring audio up
+echo -n "Enabling audio.." | fbwrite --color=255,255,255 --pos=1,8 -
+enable_audio.sh
+# Play awesome futuristic sound
+amixer sset DAC 225
+aplay /psp/ont5.wav &
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,8 -
+
+###############
+# Set up the rotary coder, which is present on some units.
+echo -n "Rotary encoder setup.." | fbwrite --color=255,255,255 --pos=1,9 -
+modprobe stmp3xxx_rotdec
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,9 -
+
+####################
+# Start the accelerometer daemon. 
+echo -n "Starting acceld.." | fbwrite --color=255,255,255 --pos=1,10 -
+acceld &                                                                                                   
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,10 -         
+
+#########################
+echo -n "Preparing network.." | fbwrite --color=255,255,255 --pos=1,11 -
+HOSTFILE=/mnt/storage/hostname
+# Assign the hostname.  Generate a default one if one doesn't exist.
+if [ -e ${HOSTFILE} ]
+then
+    cat ${HOSTFILE} > /proc/sys/kernel/hostname
+    HOSTNAME="$(hostname)"
+fi
+if [ ! -e ${HOSTFILE} -o "${HOSTNAME}" = "chumby" -o "${HOSTNAME}" = "(none)" ]
+then
+    HOSTNAME=chumby-$(ifconfig wlan0 | grep HWaddr | awk '{print $5}' | cut -d':' -f4,5,6 | tr ':' '-' | tr A-Z a-z )
+    echo "${HOSTNAME}" > ${HOSTFILE}
+    echo "Creating default hostname: ${HOSTNAME}"
+fi
+cat ${HOSTFILE} > /proc/sys/kernel/hostname
+
+# Bring up the "local" network interface.  Other network interfaces will
+# be brought up as their devices are discovered via udev events.
+ifconfig lo 127.0.0.1
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,11 -
+
+#########################
+# Set up environment variables
+source /psp/chumby.env
+
+echo -n "Starting httpd.." | fbwrite --color=255,255,255 --pos=1,12 -
+/usr/sbin/httpd -h /www
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,12 -
+
+######################
+# Start the network 
+echo -n "Configuring network.." | fbwrite --color=255,255,255 --pos=1,13 -
+start_network
+echo -n "ok" | fbwrite --color=255,255,255 --pos=$OKPOS,13 -
+
+echo -n "Getting ip.." | fbwrite --color=255,255,255 --pos=1,14 -
+ETH_ADDR=`ifconfig  | grep 'inet addr:'| grep -v '127.0.0.1' | cut -d: -f2 | awk '{ print $1}'`
+echo -en "     ${ETH_ADDR}" | fbwrite --color=255,255,255 --pos=1,15 -
+
+###################
+echo -n "System is configured and running!" | fbwrite --color=255,255,255 --pos=1,17 -
+
+# Now initialize all other stuff
+# This won't work
+# echo 1 > /proc/chumby/touchscreen/touchclick
+
+# Calibrate the touch screen if we haven't
+if [ ! -e ${TSLIB_CALIBFILE} -o -e /mnt/usb/recalib.txt ]
+then
+    ${TSLIB_BIN}/ts_calibrate
+    ${TSLIB_BIN}/ts_test
+fi
+
+if [ -e /mnt/usb/tstest.txt ]
+then
+    ${TSLIB_BIN}/ts_test
+fi
+
+# launch the laucher
+if [ -e /psp/launcher ]
+then
+    while true
+    do
+	/psp/launcher > /tmp/launcher.log 2>&1
+	/usr/bin/imgtool --mode=draw /psp/splash.png
+	echo -n "-- Trebuchet just crashed :-( Restarting in 10 secs... --" | fbwrite --color=255,255,255 --pos=1,1 -
+	sleep 10
+    done
+fi
+
